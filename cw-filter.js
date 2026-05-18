@@ -7,7 +7,6 @@ var BASE  = 'appui0GIVsqalToEa';
 var TABLE = 'Lagos Properties';
 var BASE_URL = 'https://cwlagos.com/property/';
 var BRAND = '#14214E';
-var BRAND_LIGHT = '#eef0f7';
 
 /* ── Fonts ───────────────────────────────────────────── */
 if(!document.getElementById('__cwfont')){
@@ -20,6 +19,10 @@ if(!document.getElementById('__cwfont')){
 var allRecords = [];
 var loaded = false;
 var searchTimeout = null;
+var framerGrid = null;
+var resultsEl = null;
+var counterEl = null;
+var activeInp = null;
 
 /* ── Airtable fetch (handles pagination) ─────────────── */
 function fetchPage(offset){
@@ -49,16 +52,13 @@ function get(rec){
 
 function getSlug(rec){
   var g=get(rec);
-  /* Try dedicated slug field first */
   var slug=g('Slug','slug','URL Slug','url_slug','CMS Slug');
   if(slug)return slug;
-  /* Build from name + property ID (matches cwlagos.com URL pattern) */
   var name=g('Name','Property Name','Title','Listing Name');
   var id=g('Property ID','CW ID','ID','Ref','Reference','CWID');
   if(!name)return '';
   var s=name.toString().toLowerCase()
-    .replace(/[^a-z0-9\s-]/g,'')
-    .trim().replace(/\s+/g,'-');
+    .replace(/[^a-z0-9\s-]/g,'').trim().replace(/\s+/g,'-');
   if(id)s=s+'-'+id.toString().toLowerCase().replace(/\s+/g,'-');
   return s;
 }
@@ -68,6 +68,21 @@ function formatPrice(val){
   var n=parseFloat(String(val).replace(/[^0-9.]/g,''));
   if(isNaN(n))return String(val);
   return '₦'+n.toLocaleString('en-NG');
+}
+
+function getImage(rec){
+  var fields=f(rec);
+  var keys=['Images','Photos','Image','Photo','Pictures','Thumbnail',
+            'Cover','Cover Image','Main Image','Featured Image','Gallery'];
+  for(var i=0;i<keys.length;i++){
+    var v=fields[keys[i]];
+    if(v&&Array.isArray(v)&&v.length){
+      var att=v[0];
+      if(att.thumbnails&&att.thumbnails.large) return att.thumbnails.large.url;
+      if(att.url) return att.url;
+    }
+  }
+  return '';
 }
 
 /* ── Search logic ────────────────────────────────────── */
@@ -92,7 +107,7 @@ function doSearch(q){
   });
 }
 
-/* ── Render result card ──────────────────────────────── */
+/* ── Render property card ────────────────────────────── */
 function renderCard(rec){
   var g=get(rec);
   var name   = g('Name','Property Name','Title','Listing Name','Listing Title');
@@ -101,79 +116,145 @@ function renderCard(rec){
   var type   = g('Property Type','Type','Listing Type');
   var beds   = g('Bedrooms','Bedroom','No. of Bedrooms','Number of Bedrooms');
   var status = g('Status','Listing Status','For Sale/Rent');
+  var img    = getImage(rec);
   var slug   = getSlug(rec);
   var href   = slug ? BASE_URL+slug : '#';
 
-  var a=document.createElement('a');
-  a.href=href;
-  a.style.cssText=[
-    'display:flex;flex-direction:column;gap:2px;',
-    'padding:12px 16px;text-decoration:none;border-bottom:1px solid #f1f5f9;',
-    'transition:background .12s;cursor:pointer;'
-  ].join('');
-  a.onmouseenter=function(){this.style.background=BRAND_LIGHT;};
-  a.onmouseleave=function(){this.style.background='';};
+  var card=document.createElement('a');
+  card.href=href;
+  card.style.cssText='display:flex;flex-direction:column;text-decoration:none;border-radius:16px;overflow:hidden;background:#fff;box-shadow:0 2px 12px rgba(0,0,0,.08);transition:transform .15s,box-shadow .15s;';
+  card.onmouseenter=function(){this.style.transform='translateY(-3px)';this.style.boxShadow='0 10px 28px rgba(0,0,0,.13)';};
+  card.onmouseleave=function(){this.style.transform='';this.style.boxShadow='0 2px 12px rgba(0,0,0,.08)';};
 
-  /* top row: name + price */
-  var top=document.createElement('div');
-  top.style.cssText='display:flex;justify-content:space-between;align-items:flex-start;gap:12px;';
-  var nameEl=document.createElement('span');
+  /* Image area */
+  var imgWrap=document.createElement('div');
+  imgWrap.style.cssText='position:relative;width:100%;height:200px;overflow:hidden;background:#f1f5f9;flex-shrink:0;';
+
+  if(img){
+    var imgEl=document.createElement('img');
+    imgEl.src=img;
+    imgEl.alt=name||'Property';
+    imgEl.loading='lazy';
+    imgEl.style.cssText='width:100%;height:100%;object-fit:cover;display:block;';
+    imgWrap.appendChild(imgEl);
+  } else {
+    var ph=document.createElement('div');
+    ph.style.cssText='width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#9ca3af;font-size:13px;font-family:"Satoshi",sans-serif;';
+    ph.textContent='No image';
+    imgWrap.appendChild(ph);
+  }
+
+  /* Status + type badge tags */
+  if(status||type){
+    var tags=document.createElement('div');
+    tags.style.cssText='position:absolute;top:10px;left:10px;display:flex;gap:6px;flex-wrap:wrap;';
+    if(status){
+      var st=document.createElement('span');
+      st.textContent=status;
+      var isRent=status.toLowerCase().indexOf('rent')!==-1;
+      st.style.cssText='font-size:11px;font-weight:600;padding:4px 9px;border-radius:20px;font-family:"Satoshi",sans-serif;'
+        +'background:'+(isRent?'#f59e0b':'#10b981')+';color:#fff;';
+      tags.appendChild(st);
+    }
+    if(type){
+      var ty=document.createElement('span');
+      ty.textContent=type;
+      ty.style.cssText='font-size:11px;font-weight:600;padding:4px 9px;border-radius:20px;font-family:"Satoshi",sans-serif;background:'+BRAND+';color:#fff;';
+      tags.appendChild(ty);
+    }
+    imgWrap.appendChild(tags);
+  }
+  card.appendChild(imgWrap);
+
+  /* Text content */
+  var content=document.createElement('div');
+  content.style.cssText='padding:14px 16px 16px;display:flex;flex-direction:column;gap:5px;flex:1;';
+
+  if(price){
+    var priceEl=document.createElement('div');
+    priceEl.textContent=price;
+    priceEl.style.cssText='font-size:15px;font-weight:700;color:'+BRAND+';font-family:"Satoshi",sans-serif;';
+    content.appendChild(priceEl);
+  }
+
+  var nameEl=document.createElement('div');
   nameEl.textContent=name||'Property';
-  nameEl.style.cssText='font-size:14px;font-weight:600;color:#111827;font-family:"Satoshi",sans-serif;line-height:1.3;flex:1;';
-  var priceEl=document.createElement('span');
-  priceEl.textContent=price;
-  priceEl.style.cssText='font-size:13px;font-weight:700;color:'+BRAND+';font-family:"Satoshi",sans-serif;white-space:nowrap;';
-  top.appendChild(nameEl);top.appendChild(priceEl);
+  nameEl.style.cssText='font-size:14px;font-weight:600;color:#111827;font-family:"Satoshi",sans-serif;line-height:1.35;';
+  content.appendChild(nameEl);
 
-  /* bottom row: location · type · beds · status */
-  var meta=[];
-  if(loc)meta.push(loc);
-  if(type)meta.push(type);
-  if(beds)meta.push(beds+' Bed'+(beds>1?'s':''));
-  if(status)meta.push(status);
-  var bot=document.createElement('div');
-  bot.textContent=meta.join(' · ');
-  bot.style.cssText='font-size:12px;color:#6b7280;font-family:"Satoshi",sans-serif;';
+  var metaParts=[];
+  if(loc)metaParts.push(loc);
+  if(beds)metaParts.push(beds+' Bed'+(beds>1?'s':''));
+  if(metaParts.length){
+    var metaEl=document.createElement('div');
+    metaEl.textContent=metaParts.join(' · ');
+    metaEl.style.cssText='font-size:12px;color:#6b7280;font-family:"Satoshi",sans-serif;';
+    content.appendChild(metaEl);
+  }
 
-  a.appendChild(top);a.appendChild(bot);
-  return a;
+  card.appendChild(content);
+  return card;
 }
 
-/* ── Render results panel ────────────────────────────── */
-function renderResults(q, panel, counter){
-  panel.innerHTML='';
-  if(!q.trim()){panel.style.display='none';counter.textContent='';return;}
+/* ── Show/hide results in page ───────────────────────── */
+function showResults(q){
+  resultsEl.innerHTML='';
 
+  if(!q.trim()){
+    /* No query — restore Framer grid */
+    if(framerGrid) framerGrid.style.display='';
+    resultsEl.style.display='none';
+    counterEl.textContent='';
+    return;
+  }
+
+  /* Still fetching Airtable data */
   if(!loaded){
-    panel.style.display='block';
+    if(framerGrid) framerGrid.style.display='none';
+    resultsEl.style.display='block';
+    counterEl.textContent='Loading all properties…';
     var msg=document.createElement('div');
-    msg.textContent='Loading properties… please try again in a moment.';
-    msg.style.cssText='padding:16px;color:#6b7280;font-size:14px;font-family:"Satoshi",sans-serif;';
-    panel.appendChild(msg);
+    msg.textContent='Fetching all properties from database, please wait…';
+    msg.style.cssText='padding:40px;text-align:center;color:#6b7280;font-size:15px;font-family:"Satoshi",sans-serif;';
+    resultsEl.appendChild(msg);
     return;
   }
 
   var results=doSearch(q);
-  counter.textContent=results.length+' propert'+(results.length===1?'y':'ies')+' found';
+
+  /* Hide Framer grid, show ours */
+  if(framerGrid) framerGrid.style.display='none';
+  resultsEl.style.display='grid';
+
+  counterEl.textContent=results.length+' propert'+(results.length===1?'y':'ies')+' found';
 
   if(!results.length){
-    panel.style.display='block';
     var none=document.createElement('div');
-    none.textContent='No properties match "'+q+'"';
-    none.style.cssText='padding:16px;color:#6b7280;font-size:14px;font-family:"Satoshi",sans-serif;';
-    panel.appendChild(none);
+    none.textContent='No properties match "'+q+'" — try a different location, type, or bedroom count.';
+    none.style.cssText='padding:40px;color:#6b7280;font-size:15px;font-family:"Satoshi",sans-serif;grid-column:1/-1;text-align:center;';
+    resultsEl.appendChild(none);
     return;
   }
 
-  panel.style.display='block';
-  var showing=Math.min(results.length,30);
-  for(var i=0;i<showing;i++)panel.appendChild(renderCard(results[i]));
+  /* Render first 9 results */
+  var showing=Math.min(results.length,9);
+  for(var i=0;i<showing;i++) resultsEl.appendChild(renderCard(results[i]));
 
-  if(results.length>30){
-    var more=document.createElement('div');
-    more.textContent='Showing 30 of '+results.length+' results — refine your search to narrow down.';
-    more.style.cssText='padding:12px 16px;color:#9ca3af;font-size:12px;font-family:"Satoshi",sans-serif;border-top:1px solid #f1f5f9;';
-    panel.appendChild(more);
+  /* Load more button if >9 */
+  if(results.length>9){
+    var moreWrap=document.createElement('div');
+    moreWrap.style.cssText='grid-column:1/-1;text-align:center;padding:8px 0 4px;';
+    var btn=document.createElement('button');
+    btn.textContent='Load more ('+results.length+' total)';
+    btn.style.cssText='padding:11px 28px;background:'+BRAND+';color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-family:"Satoshi",sans-serif;font-weight:600;';
+    (function(res){
+      btn.onclick=function(){
+        resultsEl.innerHTML='';
+        for(var j=0;j<res.length;j++) resultsEl.appendChild(renderCard(res[j]));
+      };
+    })(results);
+    moreWrap.appendChild(btn);
+    resultsEl.appendChild(moreWrap);
   }
 }
 
@@ -181,7 +262,7 @@ function renderResults(q, panel, counter){
 function build(){
   if(document.getElementById('__cwsearch'))return;
 
-  /* Find the property grid — try several approaches */
+  /* Find the Framer property grid */
   function isCard(el){return(el.textContent||'').indexOf('₦')!==-1;}
   var grid=null;
   var cards=document.querySelectorAll('.framer-12de3j-container');
@@ -189,7 +270,7 @@ function build(){
   if(!grid){
     var best=null,bestScore=0;
     Array.from(document.querySelectorAll('div')).forEach(function(d){
-      if(d.id==='__cwsearch')return;
+      if(d.id==='__cwsearch'||d.id==='__cwresults')return;
       var score=Array.from(d.children).filter(isCard).length;
       if(score>bestScore){bestScore=score;best=d;}
     });
@@ -197,15 +278,18 @@ function build(){
   }
   if(!grid)return;
 
-  /* Wrapper */
+  framerGrid=grid;
+
+  /* Wrapper for search bar */
   var wrap=document.createElement('div');
   wrap.id='__cwsearch';
-  wrap.style.cssText='width:100%;font-family:"Satoshi",sans-serif;box-sizing:border-box;margin-bottom:16px;position:relative;';
+  wrap.style.cssText='width:100%;font-family:"Satoshi",sans-serif;box-sizing:border-box;margin-bottom:12px;position:relative;';
 
-  /* Search input */
+  /* Input */
   var inp=document.createElement('input');
+  activeInp=inp;
   inp.type='text';inp.autocomplete='off';inp.spellcheck=false;
-  inp.placeholder='Search all properties — location, type, bedrooms, price…';
+  inp.placeholder='Search all properties — location, type, bedrooms…';
   inp.style.cssText=[
     'width:100%;box-sizing:border-box;',
     'background:#f3f4f6;border:2px solid transparent;border-radius:10px;',
@@ -219,48 +303,45 @@ function build(){
     this.style.borderColor=this.value?'#e2e8f0':'transparent';
   });
 
-  /* Clear button */
+  /* Clear (×) button */
   var clr=document.createElement('button');
   clr.type='button';clr.innerHTML='&#x2715;';
   clr.style.cssText='position:absolute;right:14px;top:14px;background:none;border:none;cursor:pointer;color:#9ca3af;font-size:16px;line-height:1;padding:2px;display:none;';
   clr.onclick=function(){
     inp.value='';clr.style.display='none';
-    panel.style.display='none';counter.textContent='';inp.focus();
+    showResults('');inp.focus();
   };
 
   /* Counter */
-  var counter=document.createElement('div');
-  counter.style.cssText='font-size:13px;color:#6b7280;font-family:"Satoshi",sans-serif;min-height:18px;margin:6px 0 4px 2px;';
-
-  /* Results panel */
-  var panel=document.createElement('div');
-  panel.style.cssText=[
-    'display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;',
-    'background:#fff;border:1px solid #e2e8f0;border-radius:12px;',
-    'box-shadow:0 8px 32px rgba(0,0,0,.12);z-index:99999;',
-    'max-height:480px;overflow-y:auto;'
-  ].join('');
+  counterEl=document.createElement('div');
+  counterEl.style.cssText='font-size:13px;color:#6b7280;font-family:"Satoshi",sans-serif;min-height:18px;margin:6px 0 4px 2px;';
 
   inp.addEventListener('input',function(){
     clr.style.display=this.value?'block':'none';
     clearTimeout(searchTimeout);
     var q=this.value;
-    searchTimeout=setTimeout(function(){renderResults(q,panel,counter);},180);
+    searchTimeout=setTimeout(function(){showResults(q);},200);
   });
 
-  /* Close panel on outside click */
-  document.addEventListener('click',function(e){
-    if(!wrap.contains(e.target)){panel.style.display='none';}
-  });
-  inp.addEventListener('focus',function(){
-    if(this.value.trim())renderResults(this.value,panel,counter);
-  });
-
-  wrap.appendChild(inp);wrap.appendChild(clr);wrap.appendChild(counter);wrap.appendChild(panel);
+  wrap.appendChild(inp);
+  wrap.appendChild(clr);
+  wrap.appendChild(counterEl);
   grid.parentNode.insertBefore(wrap,grid);
 
-  /* Start fetching all Airtable records immediately */
-  fetchPage(null).catch(function(err){
+  /* Results grid container — sits in place of Framer grid */
+  resultsEl=document.createElement('div');
+  resultsEl.id='__cwresults';
+  resultsEl.style.cssText=[
+    'display:none;',
+    'grid-template-columns:repeat(auto-fill,minmax(270px,1fr));',
+    'gap:24px;width:100%;margin-bottom:32px;'
+  ].join('');
+  grid.parentNode.insertBefore(resultsEl,grid);
+
+  /* Fetch all records; re-run search if user already typed */
+  fetchPage(null).then(function(){
+    if(activeInp&&activeInp.value.trim()) showResults(activeInp.value);
+  }).catch(function(err){
     console.error('CW Search: Airtable error',err);
     loaded=true;
   });
@@ -268,7 +349,6 @@ function build(){
 
 /* ── Boot ────────────────────────────────────────────── */
 function tryBuild(){
-  /* Try immediately, retry every 400ms until grid appears */
   build();
   if(!document.getElementById('__cwsearch')){
     var iv=setInterval(function(){
