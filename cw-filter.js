@@ -10,6 +10,8 @@ if(!document.getElementById('__cwfont')){
 if(!document.getElementById('__cwstyle')){
   var st=document.createElement('style');st.id='__cwstyle';
   st.textContent=[
+    /* hide cards via CSS class — survives React re-renders */
+    '.cw-hide{display:none!important}',
     '#__cwf,#__cwbot{font-family:"Satoshi",sans-serif!important;}',
     '#__cwf *,#__cwbot *{font-family:"Satoshi",sans-serif!important;box-sizing:border-box;}',
     '@media(max-width:768px){',
@@ -43,7 +45,7 @@ var STOP={in:1,at:1,the:1,a:1,an:1,of:1,on:1,with:1,and:1,or:1,to:1,for:1,by:1};
 
 /* ── State ───────────────────────────────────────────── */
 var S={status:[],type:[],mainLoc:[],subLoc:[],bed:[],price:[],agent:[],query:'',pid:''};
-var curPage=1,allCards=[],grid=null,framerBtn=null,moreAvail=true,loading=false;
+var curPage=1,allCards=[],grid=null,moreAvail=true,loading=false;
 
 /* ── Text helpers ────────────────────────────────────── */
 function ex(t){return E[t]||t;}
@@ -93,90 +95,110 @@ function matches(c){
   return true;
 }
 
-/* ── Framer Load More integration ────────────────────── */
+/* ── Find Framer's Load More button ──────────────────── */
 /*
-  Strategy: Framer's native pagination is set to 10 items + Load More.
-  We find its Load More button, hide it visually, and click it
-  programmatically when the user wants a page we haven't loaded yet.
+  Framer generates random class names, so we find the button by its text.
+  We search the entire document for any button whose text includes "load" or "more".
 */
-function findFramerBtn(){
-  if(!grid)return null;
-  /* Search grid's parent and one level up for buttons that aren't ours */
-  var toSearch=[grid.parentNode];
-  if(grid.parentNode&&grid.parentNode.parentNode)toSearch.push(grid.parentNode.parentNode);
-  for(var s=0;s<toSearch.length;s++){
-    if(!toSearch[s])continue;
-    var btns=toSearch[s].querySelectorAll('button');
-    for(var i=0;i<btns.length;i++){
-      var b=btns[i];
-      /* skip our own buttons */
-      if(b.id&&b.id.indexOf('__cw')===0)continue;
-      var inOurs=false;
-      var p=b.parentNode;while(p){if(p.id==='__cwf'||p.id==='__cwbot'){inOurs=true;break;}p=p.parentNode;}
-      if(inOurs)continue;
-      return b;
-    }
+function findLoadMoreBtn(){
+  var all=document.querySelectorAll('button');
+  for(var i=0;i<all.length;i++){
+    var b=all[i];
+    /* skip our own buttons */
+    if(b.id&&b.id.indexOf('__cw')===0)continue;
+    var par=b.parentElement;
+    var ours=false;
+    while(par){if(par.id==='__cwf'||par.id==='__cwbot'){ours=true;break;}par=par.parentElement;}
+    if(ours)continue;
+    var txt=(b.textContent||'').trim().toLowerCase();
+    if(txt==='load more'||txt==='load'||txt==='more'||txt==='show more')return b;
   }
   return null;
 }
 
-function isBtnActive(b){
+function isActive(b){
   if(!b)return false;
   if(b.disabled||b.getAttribute('aria-disabled')==='true')return false;
-  /* Framer hides the button when no more items exist */
   var cs=window.getComputedStyle(b);
-  if(cs.display==='none'||cs.visibility==='hidden'||cs.opacity==='0')return false;
+  if(cs.display==='none'||cs.visibility==='hidden')return false;
   return true;
 }
 
-function hideFramerBtn(b){
+/* Hide the Load More button visually but keep it functional */
+function hideLoadMore(b){
   if(!b)return;
-  /* Hide visually but keep in DOM so click still works */
-  b.style.position='absolute';
-  b.style.opacity='0';
-  b.style.pointerEvents='none';
-  b.style.height='0';
-  b.style.overflow='hidden';
-  /* Also hide wrapper if it has one */
-  if(b.parentNode&&b.parentNode!==grid.parentNode&&b.parentNode.tagName!=='BODY'){
-    b.parentNode.style.position='absolute';
-    b.parentNode.style.opacity='0';
-    b.parentNode.style.pointerEvents='none';
-    b.parentNode.style.height='0';
-    b.parentNode.style.overflow='hidden';
+  /* Hide the button's container (one level up) if it's a wrapper,
+     otherwise hide the button itself */
+  var target=b;
+  if(b.parentElement&&b.parentElement!==document.body&&
+     b.parentElement.children.length===1){
+    target=b.parentElement;
   }
+  target.style.cssText='position:absolute!important;width:1px!important;height:1px!important;overflow:hidden!important;opacity:0!important;pointer-events:none!important;';
 }
 
-function triggerLoadMore(cb){
+/* Trigger Framer's Load More and wait for new cards */
+function loadMore(cb){
   if(loading){if(cb)cb(false);return;}
-  /* Re-find the button each time in case Framer re-renders it */
-  var btn=findFramerBtn();
-  if(!btn||!isBtnActive(btn)){moreAvail=false;if(cb)cb(false);return;}
+  var btn=findLoadMoreBtn();
+  if(!btn||!isActive(btn)){moreAvail=false;if(cb)cb(false);return;}
+
   loading=true;
   var before=allCards.length;
-  /* Watch grid for new cards */
+
   var timer=setTimeout(function(){
     obs.disconnect();loading=false;moreAvail=false;if(cb)cb(false);
-  },5000);
+  },6000);
+
   var obs=new MutationObserver(function(m,o){
     var fresh=Array.from(document.querySelectorAll('.framer-12de3j-container'));
     if(fresh.length>before){
       clearTimeout(timer);o.disconnect();
       allCards=fresh;loading=false;
-      /* Check if more still available after this load */
+      /* short delay so Framer finishes rendering before we check */
       setTimeout(function(){
-        var b2=findFramerBtn();
-        moreAvail=isBtnActive(b2);
-        hideFramerBtn(b2);
+        var nb=findLoadMoreBtn();
+        moreAvail=isActive(nb);
+        if(nb)hideLoadMore(nb);
         if(cb)cb(true);
-      },300);
+      },400);
     }
   });
-  obs.observe(grid,{childList:true,subtree:true});
-  /* Temporarily restore button so Framer can process the click */
-  btn.style.opacity='1';btn.style.pointerEvents='';btn.style.height='';btn.style.overflow='';
-  btn.click();
-  btn.style.opacity='0';btn.style.pointerEvents='none';btn.style.height='0';btn.style.overflow='hidden';
+  obs.observe(document.body,{childList:true,subtree:true});
+
+  /* Temporarily reveal so Framer's click handler fires correctly */
+  var saved=btn.style.cssText;
+  btn.style.cssText='';
+  btn.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
+  btn.style.cssText=saved;
+}
+
+/* ── Background pre-load all cards ──────────────────── */
+/*
+  After the page shows the first 10 cards, we silently click Framer's
+  Load More in the background, batch by batch, until every card is in
+  the DOM. That way search/filter always works across ALL properties.
+*/
+var preloading=false;
+function preloadAll(){
+  if(!moreAvail||loading||preloading)return;
+  preloading=true;
+  loadMore(function(ok){
+    preloading=false;
+    /* Update the count label while loading */
+    var bot=document.getElementById('__cwbot');
+    if(bot){
+      var ce=bot.querySelector('span');
+      if(ce&&moreAvail)ce.textContent=allCards.length+' properties loaded… (searching all)';
+    }
+    if(ok&&moreAvail){
+      /* Small pause between loads so we don't hammer Framer's servers */
+      setTimeout(preloadAll,300);
+    } else {
+      /* All done — re-render with full count */
+      render();
+    }
+  });
 }
 
 /* ── Page navigation ─────────────────────────────────── */
@@ -184,25 +206,20 @@ function goToPage(n){
   if(n<1||loading)return;
   var matched=allCards.filter(matches);
   var knownPages=Math.max(1,Math.ceil(matched.length/PER));
+
   if(n<=knownPages){
-    /* Already have the data — just show it */
     curPage=n;render();
-    var top=(document.getElementById('__cwf')||document.body).getBoundingClientRect().top+window.scrollY-100;
-    window.scrollTo({top:Math.max(0,top),behavior:'smooth'});
+    var el=document.getElementById('__cwf')||document.body;
+    window.scrollTo({top:Math.max(0,el.getBoundingClientRect().top+window.scrollY-100),behavior:'smooth'});
     return;
   }
-  /* Need Framer to load more */
   if(!moreAvail)return;
-  /* Show loading state */
+
+  /* Show loading indicator */
   var bot=document.getElementById('__cwbot');
-  if(bot){
-    bot.innerHTML='';
-    var sp=document.createElement('span');
-    sp.textContent='Loading…';
-    sp.style.cssText='color:#6b7280;font-size:14px;font-family:"Satoshi",sans-serif;';
-    bot.appendChild(sp);
-  }
-  triggerLoadMore(function(ok){
+  if(bot){bot.innerHTML='<span style="color:#6b7280;font-size:14px;font-family:\'Satoshi\',sans-serif">Loading…</span>';}
+
+  loadMore(function(ok){
     if(ok){goToPage(n);}else{render();}
   });
 }
@@ -214,11 +231,17 @@ function render(){
   var knownPages=Math.max(1,Math.ceil(matched.length/PER));
   if(curPage>knownPages)curPage=1;
   var s=(curPage-1)*PER,e=s+PER;
+
+  /* Use CSS class — survives if Framer re-renders inline styles */
   allCards.forEach(function(c){
     var i=matched.indexOf(c);
-    if(i>=s&&i<e)c.style.removeProperty('display');
-    else c.style.setProperty('display','none','important');
+    var hide=(i<s||i>=e);
+    c.classList.toggle('cw-hide',hide);
+    /* belt-and-suspenders: also set inline style */
+    if(hide)c.style.setProperty('display','none','important');
+    else c.style.removeProperty('display');
   });
+
   renderPagination(matched.length,knownPages);
 }
 
@@ -242,17 +265,16 @@ function mkPBtn(label,pg,active,disabled){
 function renderPagination(matchedCount,knownPages){
   var bot=document.getElementById('__cwbot');if(!bot)return;
   bot.innerHTML='';
-  /* Property count */
   var ce=document.createElement('span');
-  ce.textContent=matchedCount+' propert'+(matchedCount===1?'y':'ies')+' found';
+  var countTxt=matchedCount+' propert'+(matchedCount===1?'y':'ies')+' found';
+  if(moreAvail&&allCards.length>0)countTxt+=' (loading more…)';
+  ce.textContent=countTxt;
   ce.style.cssText='color:#6b7280;font-size:14px;font-family:"Satoshi",sans-serif;white-space:nowrap;';
   bot.appendChild(ce);
   var canNext=curPage<knownPages||moreAvail;
   if(knownPages<=1&&!canNext)return;
   var pag=document.createElement('div');pag.style.cssText='display:flex;align-items:center;flex-wrap:wrap;gap:4px;';
-  /* Prev */
   pag.appendChild(mkPBtn('‹',curPage-1,false,curPage<=1));
-  /* Page numbers — only show pages we know exist */
   var ps=[];
   if(knownPages<=7){for(var i=1;i<=knownPages;i++)ps.push(i);}
   else if(curPage<=4)ps=[1,2,3,4,5,'…',knownPages];
@@ -265,7 +287,6 @@ function renderPagination(matchedCount,knownPages){
       pag.appendChild(sp);
     }else{pag.appendChild(mkPBtn(p,p,p===curPage,false));}
   });
-  /* Next — triggers Framer Load More if needed */
   pag.appendChild(mkPBtn('›',curPage+1,false,!canNext));
   bot.appendChild(pag);
 }
@@ -305,8 +326,7 @@ function mkDropdown(id,placeholder,opts,stateKey,onchange){
       var a=S[stateKey];
       if(this.checked){if(a.indexOf(opt)===-1)a.push(opt);}
       else{var idx=a.indexOf(opt);if(idx>-1)a.splice(idx,1);}
-      setLabel(btn,placeholder,S[stateKey]);
-      curPage=1;if(onchange)onchange();render();
+      setLabel(btn,placeholder,S[stateKey]);curPage=1;if(onchange)onchange();render();
     };
     lbl.appendChild(cb);lbl.appendChild(document.createTextNode(opt));panel.appendChild(lbl);
   });
@@ -363,16 +383,15 @@ function build(){
 
   allCards=Array.from(document.querySelectorAll('.framer-12de3j-container'));
 
-  /* Find and hide Framer's Load More button */
-  framerBtn=findFramerBtn();
-  moreAvail=isBtnActive(framerBtn);
-  hideFramerBtn(framerBtn);
+  /* Hide Framer's Load More button */
+  var lmBtn=findLoadMoreBtn();
+  moreAvail=isActive(lmBtn);
+  if(lmBtn)hideLoadMore(lmBtn);
 
-  /* Filter bar container */
+  /* Filter bar */
   var con=document.createElement('div');con.id='__cwf';
   con.style.cssText='width:100%;margin-bottom:16px;font-family:"Satoshi",sans-serif;box-sizing:border-box;';
 
-  /* Search input */
   var inp=document.createElement('input');
   inp.type='text';inp.autocomplete='off';inp.spellcheck=false;
   inp.placeholder='Search by name, location, type or property ID…';
@@ -381,7 +400,6 @@ function build(){
   inp.addEventListener('blur',function(){this.style.background=this.value?'#fff':'#f3f4f6';this.style.borderColor=this.value?'#e2e8f0':'transparent';});
   inp.addEventListener('input',function(){S.query=this.value;curPage=1;render();});
 
-  /* Row 1: status, type, location, sub-location */
   var row1=document.createElement('div');row1.className='cwrow';
   row1.style.cssText='display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;align-items:flex-start;';
   row1.appendChild(mkDropdown('__cwst','Listing Status',STATUSES,'status'));
@@ -389,7 +407,6 @@ function build(){
   row1.appendChild(mkDropdown('__cwml','Location',MAIN_LOCS,'mainLoc',function(){S.subLoc=[];curPage=1;}));
   row1.appendChild(mkSubDropdown());
 
-  /* Row 2: beds, price, agent, property ID, clear */
   var row2=document.createElement('div');row2.className='cwrow';
   row2.style.cssText='display:flex;flex-wrap:wrap;gap:8px;margin-bottom:0;align-items:flex-start;';
   row2.appendChild(mkDropdown('__cwbd','Bedrooms',BEDS,'bed'));
@@ -424,7 +441,6 @@ function build(){
   con.appendChild(inp);con.appendChild(row1);con.appendChild(row2);
   grid.parentNode.insertBefore(con,grid);
 
-  /* Bottom bar: count + pagination, below the grid */
   var bot=document.createElement('div');bot.id='__cwbot';
   bot.style.cssText='width:100%;display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:24px;font-family:"Satoshi",sans-serif;justify-content:space-between;';
   if(grid.nextSibling)grid.parentNode.insertBefore(bot,grid.nextSibling);
@@ -432,19 +448,23 @@ function build(){
 
   document.addEventListener('click',closeAll);
 
-  /* Watch if Framer loads more items (also picks up initial load) */
+  /* Watch for Framer loading new cards */
   var cardObs=new MutationObserver(function(){
     var fresh=Array.from(document.querySelectorAll('.framer-12de3j-container'));
     if(fresh.length!==allCards.length){
       allCards=fresh;
-      /* Re-hide the Framer button (it may have been re-rendered) */
-      var nb=findFramerBtn();if(nb&&nb!==framerBtn){framerBtn=nb;hideFramerBtn(nb);}
+      /* Re-hide Load More if Framer re-rendered it */
+      var nb=findLoadMoreBtn();
+      if(nb){moreAvail=isActive(nb);hideLoadMore(nb);}
       render();
     }
   });
   cardObs.observe(grid,{childList:true,subtree:true});
 
   render();
+
+  /* Start background pre-loading 1.5s after initial render */
+  setTimeout(preloadAll, 1500);
 }
 
 /* ── Boot ────────────────────────────────────────────── */
