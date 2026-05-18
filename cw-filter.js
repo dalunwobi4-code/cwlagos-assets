@@ -42,7 +42,7 @@ var BRAND='#14214E';
 var BRAND_LIGHT='#eef0f7';
 
 var S={status:[],type:[],mainLoc:[],subLoc:[],bed:[],price:[],agent:[],query:'',pid:''};
-var page=1,PER=10,cards=[];
+var page=1,PER=10,cards=[],grid=null;
 
 function ex(t){return E[t]||t;}
 function tk(s){return s.toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(function(t){return t.length>0&&!STOP[t];});}
@@ -230,9 +230,12 @@ function render(){
 }
 
 function build(){
-  var grid=document.querySelector('.framer-10qs1fj');
-  if(!grid){setTimeout(build,500);return;}
+  grid=document.querySelector('.framer-10qs1fj');
+  if(!grid)return;
   if(document.getElementById('__cwf'))return;
+  /* hide grid immediately — before render runs — so user never sees the 100-card flash */
+  grid.style.opacity='0';
+  grid.style.transition='opacity .25s';
   cards=Array.from(document.querySelectorAll('.framer-12de3j-container'));
 
   var con=document.createElement('div');con.id='__cwf';
@@ -309,6 +312,8 @@ function build(){
   mo.observe(grid,{childList:true});
 
   render();
+  /* reveal grid only after pagination has hidden the excess cards */
+  grid.style.opacity='1';
 }
 
 document.readyState==='loading'?document.addEventListener('DOMContentLoaded',function(){setTimeout(build,800);}):setTimeout(build,800);
