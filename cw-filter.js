@@ -17,7 +17,7 @@ var E={bed:'bedroom',beds:'bedroom',br:'bedroom',apt:'apartment',apts:'apartment
 var STOP={in:1,at:1,the:1,a:1,an:1,of:1,on:1,with:1,and:1,or:1,to:1,for:1,by:1};
 
 var S={status:[],type:[],mainLoc:[],subLoc:[],bed:[],price:[],agent:[],query:'',pid:''};
-var page=1,PER=12,cards=[],NI=null;
+var page=1,PER=10,cards=[],NI=null;
 
 function ex(t){return E[t]||t;}
 function tk(s){return s.toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(function(t){return t.length>0&&!STOP[t];});}
@@ -266,11 +266,7 @@ function build(){
   inp.style.cssText='width:100%;box-sizing:border-box;background:#f3f4f6;border:2px solid transparent;border-radius:10px;font-size:16px;padding:14px 16px;outline:none;color:#1a1a1a;font-family:inherit;-webkit-appearance:none;appearance:none;display:block;margin:0 0 10px 0;';
   inp.addEventListener('focus',function(){this.style.background='#fff';this.style.borderColor='#7c3aed';});
   inp.addEventListener('blur',function(){this.style.background=this.value?'#fff':'#f3f4f6';this.style.borderColor=this.value?'#e2e8f0':'transparent';});
-  inp.addEventListener('input',function(){
-    S.query=this.value;page=1;
-    if(NI){var d=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');if(d&&d.set)d.set.call(NI,this.value);else NI.value=this.value;NI.dispatchEvent(new Event('input',{bubbles:true}));}
-    render();
-  });
+  inp.addEventListener('input',function(){S.query=this.value;page=1;render();});
 
   // Row 1: Status, Type, Location, Sub-location
   var row1=document.createElement('div');
@@ -314,7 +310,6 @@ function build(){
       b.firstChild.nodeValue=pair[1];b.style.color='#9ca3af';
       var p=document.getElementById(pair[0]+'_panel');if(p)p.querySelectorAll('input').forEach(function(c){c.checked=false;});
     });
-    if(NI){var d=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');if(d&&d.set)d.set.call(NI,'');else NI.value='';NI.dispatchEvent(new Event('input',{bubbles:true}));}
     render();
   };
   row2.appendChild(clr);
