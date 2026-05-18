@@ -1,7 +1,7 @@
 (function(){
 'use strict';
 
-/* ── Fonts ───────────────────────────────────────────── */
+/* ── Fonts & styles ──────────────────────────────────── */
 if(!document.getElementById('__cwfont')){
   var lnk=document.createElement('link');lnk.id='__cwfont';lnk.rel='stylesheet';
   lnk.href='https://api.fontshare.com/v2/css?f[]=satoshi@700,500,400&display=swap';
@@ -10,7 +10,6 @@ if(!document.getElementById('__cwfont')){
 if(!document.getElementById('__cwstyle')){
   var st=document.createElement('style');st.id='__cwstyle';
   st.textContent=[
-    /* hide cards via CSS class — survives React re-renders */
     '.cw-hide{display:none!important}',
     '#__cwf,#__cwbot{font-family:"Satoshi",sans-serif!important;}',
     '#__cwf *,#__cwbot *{font-family:"Satoshi",sans-serif!important;box-sizing:border-box;}',
@@ -45,7 +44,48 @@ var STOP={in:1,at:1,the:1,a:1,an:1,of:1,on:1,with:1,and:1,or:1,to:1,for:1,by:1};
 
 /* ── State ───────────────────────────────────────────── */
 var S={status:[],type:[],mainLoc:[],subLoc:[],bed:[],price:[],agent:[],query:'',pid:''};
-var curPage=1,allCards=[],grid=null,moreAvail=true,loading=false;
+var curPage=1,allCards=[],grid=null,moreAvail=true,loading=false,preloading=false;
+
+/* ── Auto-detect grid & cards (no hardcoded class names) */
+function looksLikeCard(el){
+  var t=el.textContent||'';
+  return t.indexOf('₦')!==-1;
+}
+function detectGrid(){
+  /* First try: known Framer class (works until next republish) */
+  var g=document.querySelector('.framer-10qs1fj');
+  if(g&&g.children.length>=2){return g;}
+  /* Second try: find the div whose direct children are mostly property cards */
+  var best=null,bestScore=0;
+  var divs=document.querySelectorAll('div');
+  for(var i=0;i<divs.length;i++){
+    var d=divs[i];
+    if(d.id==='__cwf'||d.id==='__cwbot')continue;
+    /* skip anything inside our own UI */
+    var inOurs=false;var pp=d.parentElement;
+    while(pp){if(pp.id==='__cwf'||pp.id==='__cwbot'){inOurs=true;break;}pp=pp.parentElement;}
+    if(inOurs)continue;
+    var score=0;
+    for(var j=0;j<d.children.length;j++){if(looksLikeCard(d.children[j]))score++;}
+    if(score>bestScore){bestScore=score;best=d;}
+  }
+  return bestScore>=3?best:null;
+}
+function getCards(){
+  if(!grid)return[];
+  /* Try: direct children of grid that contain ₦ */
+  var direct=Array.from(grid.children).filter(looksLikeCard);
+  if(direct.length>=2)return direct;
+  /* Try: one level deeper */
+  var deeper=[];
+  for(var i=0;i<grid.children.length;i++){
+    var ch=grid.children[i];
+    var inner=Array.from(ch.children).filter(looksLikeCard);
+    if(inner.length>0)deeper=deeper.concat(inner);
+    else if(looksLikeCard(ch))deeper.push(ch);
+  }
+  return deeper;
+}
 
 /* ── Text helpers ────────────────────────────────────── */
 function ex(t){return E[t]||t;}
@@ -59,8 +99,7 @@ function qmatch(c,q){
   return ts.every(function(t){var f=ex(t);if(/^\d+$/.test(f))return lo.indexOf(f+' bedroom')!==-1;return lo.indexOf(f)!==-1||(f!==t&&lo.indexOf(t)!==-1);});
 }
 function bedmatch(c){
-  if(!S.bed.length)return true;
-  var lo=ct(c);
+  if(!S.bed.length)return true;var lo=ct(c);
   return S.bed.some(function(label){
     var r=BED_VALS[label];
     if(r==='10+'){for(var i=10;i<=50;i++){if(lo.indexOf(i+' bedroom')!==-1)return true;}return false;}
@@ -74,8 +113,7 @@ function pmatch(c){
   return S.price.some(function(label){var r=PRICE_VALS[label];return v>=r[0]&&v<r[1];});
 }
 function locmatch(c){
-  if(!S.mainLoc.length)return true;
-  var lo=ct(c);
+  if(!S.mainLoc.length)return true;var lo=ct(c);
   if(S.subLoc.length)return S.subLoc.some(function(s){return lo.indexOf(s.toLowerCase())!==-1;});
   return S.mainLoc.some(function(main){
     if(lo.indexOf(main.toLowerCase())!==-1)return true;
@@ -95,109 +133,71 @@ function matches(c){
   return true;
 }
 
-/* ── Find Framer's Load More button ──────────────────── */
-/*
-  Framer generates random class names, so we find the button by its text.
-  We search the entire document for any button whose text includes "load" or "more".
-*/
+/* ── Find & hide Framer's Load More button ───────────── */
 function findLoadMoreBtn(){
   var all=document.querySelectorAll('button');
   for(var i=0;i<all.length;i++){
     var b=all[i];
-    /* skip our own buttons */
     if(b.id&&b.id.indexOf('__cw')===0)continue;
-    var par=b.parentElement;
-    var ours=false;
-    while(par){if(par.id==='__cwf'||par.id==='__cwbot'){ours=true;break;}par=par.parentElement;}
-    if(ours)continue;
+    var inOurs=false;var p=b.parentElement;
+    while(p){if(p.id==='__cwf'||p.id==='__cwbot'){inOurs=true;break;}p=p.parentElement;}
+    if(inOurs)continue;
     var txt=(b.textContent||'').trim().toLowerCase();
-    if(txt==='load more'||txt==='load'||txt==='more'||txt==='show more')return b;
+    if(txt==='load more'||txt==='load'||txt==='more'||txt==='show more'||txt==='next')return b;
   }
   return null;
 }
-
 function isActive(b){
   if(!b)return false;
   if(b.disabled||b.getAttribute('aria-disabled')==='true')return false;
   var cs=window.getComputedStyle(b);
-  if(cs.display==='none'||cs.visibility==='hidden')return false;
-  return true;
+  return cs.display!=='none'&&cs.visibility!=='hidden';
 }
-
-/* Hide the Load More button visually but keep it functional */
 function hideLoadMore(b){
   if(!b)return;
-  /* Hide the button's container (one level up) if it's a wrapper,
-     otherwise hide the button itself */
-  var target=b;
-  if(b.parentElement&&b.parentElement!==document.body&&
-     b.parentElement.children.length===1){
-    target=b.parentElement;
-  }
-  target.style.cssText='position:absolute!important;width:1px!important;height:1px!important;overflow:hidden!important;opacity:0!important;pointer-events:none!important;';
+  var wrap=b.parentElement;
+  var target=(wrap&&wrap!==document.body&&wrap.children.length===1)?wrap:b;
+  target.setAttribute('data-cw-hidden','1');
+  target.style.cssText='position:absolute!important;width:1px!important;height:1px!important;overflow:hidden!important;opacity:0!important;pointer-events:none!important;clip:rect(0,0,0,0)!important;';
 }
-
-/* Trigger Framer's Load More and wait for new cards */
-function loadMore(cb){
+function triggerFramerLoad(cb){
   if(loading){if(cb)cb(false);return;}
   var btn=findLoadMoreBtn();
   if(!btn||!isActive(btn)){moreAvail=false;if(cb)cb(false);return;}
-
   loading=true;
   var before=allCards.length;
-
-  var timer=setTimeout(function(){
-    obs.disconnect();loading=false;moreAvail=false;if(cb)cb(false);
-  },6000);
-
+  var timer=setTimeout(function(){obs.disconnect();loading=false;moreAvail=false;if(cb)cb(false);},6000);
   var obs=new MutationObserver(function(m,o){
-    var fresh=Array.from(document.querySelectorAll('.framer-12de3j-container'));
+    var fresh=getCards();
     if(fresh.length>before){
-      clearTimeout(timer);o.disconnect();
-      allCards=fresh;loading=false;
-      /* short delay so Framer finishes rendering before we check */
+      clearTimeout(timer);o.disconnect();allCards=fresh;loading=false;
       setTimeout(function(){
-        var nb=findLoadMoreBtn();
-        moreAvail=isActive(nb);
-        if(nb)hideLoadMore(nb);
+        var nb=findLoadMoreBtn();moreAvail=isActive(nb);if(nb)hideLoadMore(nb);
         if(cb)cb(true);
       },400);
     }
   });
-  obs.observe(document.body,{childList:true,subtree:true});
-
-  /* Temporarily reveal so Framer's click handler fires correctly */
+  obs.observe(grid,{childList:true,subtree:true});
+  /* Reveal briefly so Framer's React handler fires */
   var saved=btn.style.cssText;
-  btn.style.cssText='';
+  btn.removeAttribute('data-cw-hidden');btn.style.cssText='';
   btn.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
-  btn.style.cssText=saved;
+  btn.setAttribute('data-cw-hidden','1');btn.style.cssText=saved;
 }
 
-/* ── Background pre-load all cards ──────────────────── */
-/*
-  After the page shows the first 10 cards, we silently click Framer's
-  Load More in the background, batch by batch, until every card is in
-  the DOM. That way search/filter always works across ALL properties.
-*/
-var preloading=false;
+/* ── Background preload all cards ────────────────────── */
 function preloadAll(){
   if(!moreAvail||loading||preloading)return;
   preloading=true;
-  loadMore(function(ok){
+  triggerFramerLoad(function(ok){
     preloading=false;
-    /* Update the count label while loading */
     var bot=document.getElementById('__cwbot');
-    if(bot){
+    if(bot&&moreAvail){
       var ce=bot.querySelector('span');
-      if(ce&&moreAvail)ce.textContent=allCards.length+' properties loaded… (searching all)';
+      if(ce)ce.textContent=allCards.length+' properties loaded… (still loading)';
     }
-    if(ok&&moreAvail){
-      /* Small pause between loads so we don't hammer Framer's servers */
-      setTimeout(preloadAll,300);
-    } else {
-      /* All done — re-render with full count */
-      render();
-    }
+    if(ok&&moreAvail)setTimeout(preloadAll,300);
+    else render();
   });
 }
 
@@ -206,7 +206,6 @@ function goToPage(n){
   if(n<1||loading)return;
   var matched=allCards.filter(matches);
   var knownPages=Math.max(1,Math.ceil(matched.length/PER));
-
   if(n<=knownPages){
     curPage=n;render();
     var el=document.getElementById('__cwf')||document.body;
@@ -214,14 +213,9 @@ function goToPage(n){
     return;
   }
   if(!moreAvail)return;
-
-  /* Show loading indicator */
   var bot=document.getElementById('__cwbot');
-  if(bot){bot.innerHTML='<span style="color:#6b7280;font-size:14px;font-family:\'Satoshi\',sans-serif">Loading…</span>';}
-
-  loadMore(function(ok){
-    if(ok){goToPage(n);}else{render();}
-  });
+  if(bot)bot.innerHTML='<span style="color:#6b7280;font-size:14px;font-family:\'Satoshi\',sans-serif">Loading…</span>';
+  triggerFramerLoad(function(ok){if(ok)goToPage(n);else render();});
 }
 
 /* ── Core render ─────────────────────────────────────── */
@@ -231,44 +225,31 @@ function render(){
   var knownPages=Math.max(1,Math.ceil(matched.length/PER));
   if(curPage>knownPages)curPage=1;
   var s=(curPage-1)*PER,e=s+PER;
-
-  /* Use CSS class — survives if Framer re-renders inline styles */
   allCards.forEach(function(c){
     var i=matched.indexOf(c);
     var hide=(i<s||i>=e);
     c.classList.toggle('cw-hide',hide);
-    /* belt-and-suspenders: also set inline style */
     if(hide)c.style.setProperty('display','none','important');
     else c.style.removeProperty('display');
   });
-
   renderPagination(matched.length,knownPages);
 }
 
 /* ── Pagination UI ───────────────────────────────────── */
 function mkPBtn(label,pg,active,disabled){
   var b=document.createElement('button');b.type='button';b.textContent=label;
-  if(disabled){
-    b.disabled=true;
-    b.style.cssText='min-width:36px;height:36px;padding:0 8px;border-radius:8px;border:1px solid #e2e8f0;background:#f9fafb;color:#d1d5db;font-size:14px;cursor:not-allowed;margin:0 2px;font-family:"Satoshi",sans-serif;';
-    return b;
-  }
+  if(disabled){b.disabled=true;b.style.cssText='min-width:36px;height:36px;padding:0 8px;border-radius:8px;border:1px solid #e2e8f0;background:#f9fafb;color:#d1d5db;font-size:14px;cursor:not-allowed;margin:0 2px;font-family:"Satoshi",sans-serif;';return b;}
   b.style.cssText='min-width:36px;height:36px;padding:0 8px;border-radius:8px;border:1px solid '+(active?BRAND:'#e2e8f0')+';background:'+(active?BRAND:'#fff')+';color:'+(active?'#fff':'#374151')+';font-size:14px;cursor:pointer;margin:0 2px;font-family:"Satoshi",sans-serif;transition:all .15s;';
-  if(!active){
-    b.onmouseenter=function(){this.style.borderColor=BRAND;this.style.color=BRAND;};
-    b.onmouseleave=function(){this.style.borderColor='#e2e8f0';this.style.color='#374151';};
-  }
-  b.onclick=function(){goToPage(pg);};
-  return b;
+  if(!active){b.onmouseenter=function(){this.style.borderColor=BRAND;this.style.color=BRAND;};b.onmouseleave=function(){this.style.borderColor='#e2e8f0';this.style.color='#374151';};}
+  b.onclick=function(){goToPage(pg);};return b;
 }
-
 function renderPagination(matchedCount,knownPages){
   var bot=document.getElementById('__cwbot');if(!bot)return;
   bot.innerHTML='';
   var ce=document.createElement('span');
-  var countTxt=matchedCount+' propert'+(matchedCount===1?'y':'ies')+' found';
-  if(moreAvail&&allCards.length>0)countTxt+=' (loading more…)';
-  ce.textContent=countTxt;
+  var txt=matchedCount+' propert'+(matchedCount===1?'y':'ies')+' found';
+  if(moreAvail)txt+=' (loading more…)';
+  ce.textContent=txt;
   ce.style.cssText='color:#6b7280;font-size:14px;font-family:"Satoshi",sans-serif;white-space:nowrap;';
   bot.appendChild(ce);
   var canNext=curPage<knownPages||moreAvail;
@@ -281,30 +262,16 @@ function renderPagination(matchedCount,knownPages){
   else if(curPage>=knownPages-3)ps=[1,'…',knownPages-4,knownPages-3,knownPages-2,knownPages-1,knownPages];
   else ps=[1,'…',curPage-1,curPage,curPage+1,'…',knownPages];
   ps.forEach(function(p){
-    if(p==='…'){
-      var sp=document.createElement('span');sp.textContent='…';
-      sp.style.cssText='display:inline-flex;align-items:center;min-width:36px;height:36px;justify-content:center;color:#9ca3af;font-size:14px;font-family:"Satoshi",sans-serif;';
-      pag.appendChild(sp);
-    }else{pag.appendChild(mkPBtn(p,p,p===curPage,false));}
+    if(p==='…'){var sp=document.createElement('span');sp.textContent='…';sp.style.cssText='display:inline-flex;align-items:center;min-width:36px;height:36px;justify-content:center;color:#9ca3af;font-size:14px;';pag.appendChild(sp);}
+    else pag.appendChild(mkPBtn(p,p,p===curPage,false));
   });
   pag.appendChild(mkPBtn('›',curPage+1,false,!canNext));
   bot.appendChild(pag);
 }
 
-/* ── Dropdown helpers ────────────────────────────────── */
-function closeAll(){
-  document.querySelectorAll('.__cwpanel').forEach(function(p){
-    p.style.display='none';
-    var b=document.getElementById(p.id.replace('_panel','_btn'));
-    if(b){var a=b.querySelector('.__cwarr');if(a)a.style.transform='translateY(-50%)';}
-  });
-}
-function setLabel(btn,placeholder,vals){
-  var a=btn.querySelector('.__cwarr');
-  btn.firstChild.nodeValue=vals.length?(vals.length===1?vals[0]:vals.length+' selected'):placeholder;
-  btn.style.color=vals.length?'#1a1a1a':'#9ca3af';
-  if(a)btn.appendChild(a);
-}
+/* ── Dropdowns ───────────────────────────────────────── */
+function closeAll(){document.querySelectorAll('.__cwpanel').forEach(function(p){p.style.display='none';var b=document.getElementById(p.id.replace('_panel','_btn'));if(b){var a=b.querySelector('.__cwarr');if(a)a.style.transform='translateY(-50%)';}});}
+function setLabel(btn,placeholder,vals){var a=btn.querySelector('.__cwarr');btn.firstChild.nodeValue=vals.length?(vals.length===1?vals[0]:vals.length+' selected'):placeholder;btn.style.color=vals.length?'#1a1a1a':'#9ca3af';if(a)btn.appendChild(a);}
 function mkDropdown(id,placeholder,opts,stateKey,onchange){
   var wrap=document.createElement('div');wrap.style.cssText='position:relative;flex:1;min-width:140px;';
   var btn=document.createElement('button');btn.id=id+'_btn';btn.type='button';
@@ -316,165 +283,116 @@ function mkDropdown(id,placeholder,opts,stateKey,onchange){
   var panel=document.createElement('div');panel.id=id+'_panel';panel.className='__cwpanel';
   panel.style.cssText='display:none;position:absolute;top:calc(100% + 4px);left:0;min-width:100%;max-height:220px;overflow-y:auto;background:#fff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.1);z-index:9999;padding:6px 0;';
   opts.forEach(function(opt){
-    var lbl=document.createElement('label');
-    lbl.style.cssText='display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;font-size:14px;color:#374151;font-family:"Satoshi",sans-serif;';
-    lbl.onmouseenter=function(){this.style.background=BRAND_LIGHT;};
-    lbl.onmouseleave=function(){this.style.background='';};
+    var lbl=document.createElement('label');lbl.style.cssText='display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;font-size:14px;color:#374151;font-family:"Satoshi",sans-serif;';
+    lbl.onmouseenter=function(){this.style.background=BRAND_LIGHT;};lbl.onmouseleave=function(){this.style.background='';};
     var cb=document.createElement('input');cb.type='checkbox';cb.value=opt;
     cb.style.cssText='width:15px;height:15px;accent-color:'+BRAND+';cursor:pointer;flex-shrink:0;';
-    cb.onchange=function(){
-      var a=S[stateKey];
-      if(this.checked){if(a.indexOf(opt)===-1)a.push(opt);}
-      else{var idx=a.indexOf(opt);if(idx>-1)a.splice(idx,1);}
-      setLabel(btn,placeholder,S[stateKey]);curPage=1;if(onchange)onchange();render();
-    };
+    cb.onchange=function(){var a=S[stateKey];if(this.checked){if(a.indexOf(opt)===-1)a.push(opt);}else{var idx=a.indexOf(opt);if(idx>-1)a.splice(idx,1);}setLabel(btn,placeholder,S[stateKey]);curPage=1;if(onchange)onchange();render();};
     lbl.appendChild(cb);lbl.appendChild(document.createTextNode(opt));panel.appendChild(lbl);
   });
   btn.onclick=function(e){e.stopPropagation();var open=panel.style.display!=='none';closeAll();if(!open){panel.style.display='block';arr.style.transform='translateY(-50%) rotate(180deg)';}};
   wrap.appendChild(btn);wrap.appendChild(panel);return wrap;
 }
 function mkSubDropdown(){
-  var wrap=document.createElement('div');wrap.id='__cwsub';
-  wrap.style.cssText='position:relative;flex:1;min-width:140px;display:none;';
+  var wrap=document.createElement('div');wrap.id='__cwsub';wrap.style.cssText='position:relative;flex:1;min-width:140px;display:none;';
   var btn=document.createElement('button');btn.id='__cwsubd_btn';btn.type='button';
   btn.style.cssText='width:100%;padding:10px 30px 10px 12px;border:1px solid '+BRAND+';border-radius:8px;background:'+BRAND_LIGHT+';font-size:14px;color:#9ca3af;cursor:pointer;font-family:"Satoshi",sans-serif;outline:none;text-align:left;position:relative;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
   btn.appendChild(document.createTextNode('Sub-neighbourhood'));
   var arr=document.createElement('span');arr.className='__cwarr';arr.innerHTML='&#9662;';
-  arr.style.cssText='position:absolute;right:10px;top:50%;transform:translateY(-50%);pointer-events:none;color:'+BRAND+';font-size:11px;transition:transform .15s;';
-  btn.appendChild(arr);
+  arr.style.cssText='position:absolute;right:10px;top:50%;transform:translateY(-50%);pointer-events:none;color:'+BRAND+';font-size:11px;transition:transform .15s;';btn.appendChild(arr);
   var panel=document.createElement('div');panel.id='__cwsubd_panel';panel.className='__cwpanel';
   panel.style.cssText='display:none;position:absolute;top:calc(100% + 4px);left:0;min-width:100%;max-height:220px;overflow-y:auto;background:#fff;border:1px solid '+BRAND+';border-radius:10px;box-shadow:0 8px 24px rgba(20,33,78,.12);z-index:9999;padding:6px 0;';
   btn.onclick=function(e){e.stopPropagation();var open=panel.style.display!=='none';closeAll();if(!open){panel.style.display='block';arr.style.transform='translateY(-50%) rotate(180deg)';}};
   wrap.appendChild(btn);wrap.appendChild(panel);return wrap;
 }
 function refreshSubDropdown(){
-  var wrap=document.getElementById('__cwsub');
-  var panel=document.getElementById('__cwsubd_panel');
-  var btn=document.getElementById('__cwsubd_btn');
+  var wrap=document.getElementById('__cwsub'),panel=document.getElementById('__cwsubd_panel'),btn=document.getElementById('__cwsubd_btn');
   if(!wrap||!panel||!btn)return;
-  var avail=[];
-  S.mainLoc.forEach(function(m){(SUB_MAP[m]||[]).forEach(function(s){if(avail.indexOf(s)===-1)avail.push(s);});});
+  var avail=[];S.mainLoc.forEach(function(m){(SUB_MAP[m]||[]).forEach(function(s){if(avail.indexOf(s)===-1)avail.push(s);});});
   if(!avail.length){wrap.style.display='none';S.subLoc=[];setLabel(btn,'Sub-neighbourhood',[]);return;}
-  wrap.style.display='';
-  S.subLoc=S.subLoc.filter(function(s){return avail.indexOf(s)!==-1;});
-  setLabel(btn,'Sub-neighbourhood',S.subLoc);
+  wrap.style.display='';S.subLoc=S.subLoc.filter(function(s){return avail.indexOf(s)!==-1;});setLabel(btn,'Sub-neighbourhood',S.subLoc);
   panel.innerHTML='';
   avail.forEach(function(opt){
-    var lbl=document.createElement('label');
-    lbl.style.cssText='display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;font-size:14px;color:#374151;font-family:"Satoshi",sans-serif;';
-    lbl.onmouseenter=function(){this.style.background=BRAND_LIGHT;};
-    lbl.onmouseleave=function(){this.style.background='';};
+    var lbl=document.createElement('label');lbl.style.cssText='display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;font-size:14px;color:#374151;font-family:"Satoshi",sans-serif;';
+    lbl.onmouseenter=function(){this.style.background=BRAND_LIGHT;};lbl.onmouseleave=function(){this.style.background='';};
     var cb=document.createElement('input');cb.type='checkbox';cb.value=opt;cb.checked=S.subLoc.indexOf(opt)!==-1;
     cb.style.cssText='width:15px;height:15px;accent-color:'+BRAND+';cursor:pointer;flex-shrink:0;';
-    cb.onchange=function(){
-      if(this.checked){if(S.subLoc.indexOf(opt)===-1)S.subLoc.push(opt);}
-      else{var i=S.subLoc.indexOf(opt);if(i>-1)S.subLoc.splice(i,1);}
-      setLabel(btn,'Sub-neighbourhood',S.subLoc);curPage=1;render();
-    };
+    cb.onchange=function(){if(this.checked){if(S.subLoc.indexOf(opt)===-1)S.subLoc.push(opt);}else{var i=S.subLoc.indexOf(opt);if(i>-1)S.subLoc.splice(i,1);}setLabel(btn,'Sub-neighbourhood',S.subLoc);curPage=1;render();};
     lbl.appendChild(cb);lbl.appendChild(document.createTextNode(opt));panel.appendChild(lbl);
   });
 }
 
 /* ── Build UI ────────────────────────────────────────── */
 function build(){
-  grid=document.querySelector('.framer-10qs1fj');
-  if(!grid)return;
   if(document.getElementById('__cwf'))return;
+  allCards=getCards();
+  var lmBtn=findLoadMoreBtn();moreAvail=isActive(lmBtn);if(lmBtn)hideLoadMore(lmBtn);
 
-  allCards=Array.from(document.querySelectorAll('.framer-12de3j-container'));
-
-  /* Hide Framer's Load More button */
-  var lmBtn=findLoadMoreBtn();
-  moreAvail=isActive(lmBtn);
-  if(lmBtn)hideLoadMore(lmBtn);
-
-  /* Filter bar */
-  var con=document.createElement('div');con.id='__cwf';
-  con.style.cssText='width:100%;margin-bottom:16px;font-family:"Satoshi",sans-serif;box-sizing:border-box;';
-
-  var inp=document.createElement('input');
-  inp.type='text';inp.autocomplete='off';inp.spellcheck=false;
+  var con=document.createElement('div');con.id='__cwf';con.style.cssText='width:100%;margin-bottom:16px;font-family:"Satoshi",sans-serif;box-sizing:border-box;';
+  var inp=document.createElement('input');inp.type='text';inp.autocomplete='off';inp.spellcheck=false;
   inp.placeholder='Search by name, location, type or property ID…';
   inp.style.cssText='width:100%;box-sizing:border-box;background:#f3f4f6;border:2px solid transparent;border-radius:10px;font-size:16px;padding:14px 16px;outline:none;color:#1a1a1a;font-family:"Satoshi",sans-serif;-webkit-appearance:none;appearance:none;display:block;margin:0 0 10px 0;';
   inp.addEventListener('focus',function(){this.style.background='#fff';this.style.borderColor=BRAND;});
   inp.addEventListener('blur',function(){this.style.background=this.value?'#fff':'#f3f4f6';this.style.borderColor=this.value?'#e2e8f0':'transparent';});
   inp.addEventListener('input',function(){S.query=this.value;curPage=1;render();});
-
-  var row1=document.createElement('div');row1.className='cwrow';
-  row1.style.cssText='display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;align-items:flex-start;';
+  var row1=document.createElement('div');row1.className='cwrow';row1.style.cssText='display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;align-items:flex-start;';
   row1.appendChild(mkDropdown('__cwst','Listing Status',STATUSES,'status'));
   row1.appendChild(mkDropdown('__cwty','Property Type',TYPES,'type'));
   row1.appendChild(mkDropdown('__cwml','Location',MAIN_LOCS,'mainLoc',function(){S.subLoc=[];curPage=1;}));
   row1.appendChild(mkSubDropdown());
-
-  var row2=document.createElement('div');row2.className='cwrow';
-  row2.style.cssText='display:flex;flex-wrap:wrap;gap:8px;margin-bottom:0;align-items:flex-start;';
+  var row2=document.createElement('div');row2.className='cwrow';row2.style.cssText='display:flex;flex-wrap:wrap;gap:8px;margin-bottom:0;align-items:flex-start;';
   row2.appendChild(mkDropdown('__cwbd','Bedrooms',BEDS,'bed'));
   row2.appendChild(mkDropdown('__cwpr','Price Range',PRICES,'price'));
   row2.appendChild(mkDropdown('__cwag','Agent',AGENTS,'agent'));
-
   var pidW=document.createElement('div');pidW.style.cssText='flex:1;min-width:130px;';
-  var pidI=document.createElement('input');
-  pidI.type='text';pidI.placeholder='Property ID';pidI.autocomplete='off';
+  var pidI=document.createElement('input');pidI.type='text';pidI.placeholder='Property ID';pidI.autocomplete='off';
   pidI.style.cssText='width:100%;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;font-size:14px;color:#374151;font-family:"Satoshi",sans-serif;outline:none;-webkit-appearance:none;appearance:none;';
-  pidI.addEventListener('focus',function(){this.style.borderColor=BRAND;});
-  pidI.addEventListener('blur',function(){this.style.borderColor='#e2e8f0';});
+  pidI.addEventListener('focus',function(){this.style.borderColor=BRAND;});pidI.addEventListener('blur',function(){this.style.borderColor='#e2e8f0';});
   pidI.addEventListener('input',function(){S.pid=this.value;curPage=1;render();});
   pidW.appendChild(pidI);row2.appendChild(pidW);
-
   var clr=document.createElement('button');clr.type='button';clr.textContent='Clear All';
   clr.style.cssText='flex:0 0 auto;padding:10px 16px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;color:#6b7280;font-size:14px;cursor:pointer;font-family:"Satoshi",sans-serif;white-space:nowrap;';
-  clr.onmouseenter=function(){this.style.borderColor='#ef4444';this.style.color='#ef4444';};
-  clr.onmouseleave=function(){this.style.borderColor='#e2e8f0';this.style.color='#6b7280';};
+  clr.onmouseenter=function(){this.style.borderColor='#ef4444';this.style.color='#ef4444';};clr.onmouseleave=function(){this.style.borderColor='#e2e8f0';this.style.color='#6b7280';};
   clr.onclick=function(){
     S={status:[],type:[],mainLoc:[],subLoc:[],bed:[],price:[],agent:[],query:'',pid:''};curPage=1;
     inp.value='';pidI.value='';inp.style.background='#f3f4f6';inp.style.borderColor='transparent';
     [['__cwst','Listing Status'],['__cwty','Property Type'],['__cwml','Location'],['__cwbd','Bedrooms'],['__cwpr','Price Range'],['__cwag','Agent']].forEach(function(pair){
-      var b=document.getElementById(pair[0]+'_btn');if(!b)return;
-      b.firstChild.nodeValue=pair[1];b.style.color='#9ca3af';
+      var b=document.getElementById(pair[0]+'_btn');if(!b)return;b.firstChild.nodeValue=pair[1];b.style.color='#9ca3af';
       var p=document.getElementById(pair[0]+'_panel');if(p)p.querySelectorAll('input').forEach(function(c){c.checked=false;});
-    });
-    render();
+    });render();
   };
   row2.appendChild(clr);
-
   con.appendChild(inp);con.appendChild(row1);con.appendChild(row2);
   grid.parentNode.insertBefore(con,grid);
 
-  var bot=document.createElement('div');bot.id='__cwbot';
-  bot.style.cssText='width:100%;display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:24px;font-family:"Satoshi",sans-serif;justify-content:space-between;';
-  if(grid.nextSibling)grid.parentNode.insertBefore(bot,grid.nextSibling);
-  else grid.parentNode.appendChild(bot);
-
+  var bot=document.createElement('div');bot.id='__cwbot';bot.style.cssText='width:100%;display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:24px;font-family:"Satoshi",sans-serif;justify-content:space-between;';
+  if(grid.nextSibling)grid.parentNode.insertBefore(bot,grid.nextSibling);else grid.parentNode.appendChild(bot);
   document.addEventListener('click',closeAll);
 
-  /* Watch for Framer loading new cards */
   var cardObs=new MutationObserver(function(){
-    var fresh=Array.from(document.querySelectorAll('.framer-12de3j-container'));
+    var fresh=getCards();
     if(fresh.length!==allCards.length){
       allCards=fresh;
-      /* Re-hide Load More if Framer re-rendered it */
-      var nb=findLoadMoreBtn();
-      if(nb){moreAvail=isActive(nb);hideLoadMore(nb);}
+      var nb=findLoadMoreBtn();if(nb){moreAvail=isActive(nb);hideLoadMore(nb);}
       render();
     }
   });
   cardObs.observe(grid,{childList:true,subtree:true});
-
   render();
-
-  /* Start background pre-loading 1.5s after initial render */
-  setTimeout(preloadAll, 1500);
+  setTimeout(preloadAll,1500);
 }
 
-/* ── Boot ────────────────────────────────────────────── */
+/* ── Boot: auto-detect grid, no hardcoded class needed ── */
 function tryBuild(){
-  if(document.querySelector('.framer-10qs1fj')){build();return;}
-  var obs=new MutationObserver(function(m,o){
-    if(document.querySelector('.framer-10qs1fj')){o.disconnect();build();}
-  });
-  obs.observe(document.body||document.documentElement,{childList:true,subtree:true});
-  setTimeout(function(){obs.disconnect();if(!document.getElementById('__cwf'))build();},8000);
+  grid=detectGrid();
+  if(grid){build();return;}
+  var attempts=0;
+  var iv=setInterval(function(){
+    attempts++;
+    grid=detectGrid();
+    if(grid){clearInterval(iv);build();return;}
+    if(attempts>40){clearInterval(iv);} /* give up after 20s */
+  },500);
 }
 document.readyState==='loading'?document.addEventListener('DOMContentLoaded',tryBuild):tryBuild();
 })();
