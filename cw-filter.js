@@ -264,34 +264,19 @@ function build(){
   grid=g;
   allCards=Array.from(grid.children);
 
-  /* ── Filter bar ── */
-  var bar=document.createElement('div');
-  bar.id='__cwfilterbar';
-  bar.style.cssText='display:flex;align-items:center;gap:12px;margin-bottom:20px;font-family:"Satoshi",sans-serif;';
+  /* Sentinel so we don't re-run */
+  var sentinel=document.createElement('div');
+  sentinel.id='__cwfilterbar';
+  sentinel.style.display='none';
+  grid.parentNode.insertBefore(sentinel,grid);
 
-  var filterBtn=document.createElement('button');
-  filterBtn.type='button';
-  filterBtn.innerHTML=[
-    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" ',
-    'style="vertical-align:middle;margin-right:7px">',
-    '<line x1="4" y1="6" x2="20" y2="6"/>',
-    '<line x1="8" y1="12" x2="16" y2="12"/>',
-    '<line x1="11" y1="18" x2="13" y2="18"/>',
-    '</svg>Filters'
-  ].join('');
-  filterBtn.style.cssText=[
-    'display:inline-flex;align-items:center;padding:10px 22px;',
-    'background:'+BRAND+';color:#fff;border:none;border-radius:8px;',
-    'font-size:14px;font-weight:600;font-family:"Satoshi",sans-serif;cursor:pointer;'
-  ].join('');
-  filterBtn.onclick=openModal;
-
+  /* Counter — shows "X properties found" after applying */
   counterEl=document.createElement('div');
-  counterEl.style.cssText='font-size:13px;color:#6b7280;font-family:"Satoshi",sans-serif;';
+  counterEl.style.cssText='font-size:13px;color:#6b7280;font-family:"Satoshi",sans-serif;margin-bottom:8px;';
+  grid.parentNode.insertBefore(counterEl,grid);
 
-  bar.appendChild(filterBtn);
-  bar.appendChild(counterEl);
-  grid.parentNode.insertBefore(bar,grid);
+  /* Expose modal opener globally for the Framer code component */
+  window.__cwOpenFilters=openModal;
 
   /* ── Modal overlay ── */
   overlay=document.createElement('div');
