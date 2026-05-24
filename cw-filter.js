@@ -4,11 +4,16 @@
 /* ── Config ──────────────────────────────────────────── */
 var BRAND = '#14214E';
 
-/* ── Fonts ───────────────────────────────────────────── */
+/* ── Fonts + hide class ──────────────────────────────── */
 if(!document.getElementById('__cwfont')){
   var lnk=document.createElement('link');lnk.id='__cwfont';lnk.rel='stylesheet';
   lnk.href='https://api.fontshare.com/v2/css?f[]=satoshi@700,500,400&display=swap';
   document.head.appendChild(lnk);
+}
+if(!document.getElementById('__cwstyle')){
+  var sty=document.createElement('style');sty.id='__cwstyle';
+  sty.textContent='.cw-hide{display:none!important;}';
+  document.head.appendChild(sty);
 }
 
 /* ── State ───────────────────────────────────────────── */
@@ -68,17 +73,22 @@ function getUniqueTypes(){
 
 /* ── Apply filters to DOM cards ──────────────────────── */
 function applyFilters(){
+  /* Re-capture cards every time in case Framer re-rendered */
+  if(grid) allCards=Array.from(grid.children).filter(function(el){
+    return (el.textContent||'').indexOf('₦')!==-1;
+  });
+
   var f=activeFilters;
   var hasAny=f.status||f.type||f.agent||f.propertyId||f.bedrooms||f.priceRange;
   var visCount=0;
 
   allCards.forEach(function(card){
-    if(!hasAny){card.style.display='';visCount++;return;}
+    if(!hasAny){card.classList.remove('cw-hide');visCount++;return;}
     var txt=cardText(card);
     var show=true;
 
-    if(show&&f.status)   show=txt.indexOf(f.status.toLowerCase())!==-1;
-    if(show&&f.type)     show=txt.indexOf(f.type.toLowerCase())!==-1;
+    if(show&&f.status)     show=txt.indexOf(f.status.toLowerCase())!==-1;
+    if(show&&f.type)       show=txt.indexOf(f.type.toLowerCase())!==-1;
     if(show&&f.propertyId) show=txt.indexOf(f.propertyId.toLowerCase())!==-1;
 
     if(show&&f.bedrooms){
@@ -96,12 +106,12 @@ function applyFilters(){
       else show=p>=f.priceRange.min&&p<f.priceRange.max;
     }
 
-    card.style.display=show?'':' none';
-    if(show)visCount++;
+    if(show){card.classList.remove('cw-hide');visCount++;}
+    else{card.classList.add('cw-hide');}
   });
 
   if(counterEl){
-    var active=activeFilters.status||activeFilters.type||activeFilters.propertyId||activeFilters.bedrooms||activeFilters.priceRange;
+    var active=f.status||f.type||f.propertyId||f.bedrooms||f.priceRange;
     counterEl.textContent=active?(visCount+' propert'+(visCount===1?'y':'ies')+' found'):'';
   }
 }
